@@ -1,0 +1,17 @@
+# Generated pipeline outputs
+data/out/
+
+# Generated synthetic inputs (regenerate with scripts/make_synthetic.py)
+data/synthetic/*
+!data/synthetic/.gitkeep
+
+# Local tool folders
+.freebuff/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/

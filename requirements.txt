@@ -1,0 +1,6 @@
+# GlassMark - phase 1
+# CPU only, no GUI dependencies. opencv-python (with GUI) works as well if the
+# GUI build is already installed, but headless is enough for this pipeline.
+numpy>=1.26
+opencv-python-headless>=4.9
+pytest>=8.0
