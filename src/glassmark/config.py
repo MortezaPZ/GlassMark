@@ -34,11 +34,31 @@ class Phase1Config:
     min_glare_area: int = 16
     max_glare_area_frac: float = 0.22
     """Larger bright areas are exposure/backlight, not recoverable glare."""
-    glow_luma: float = 136.0
+    highlight_over_plate: float = 8.0
+    """A candidate must be this much brighter than the plate around it.  Without
+    it the bright rim of the plate - which only looks bright because the
+    background estimate crossed onto the dark table - is mistaken for a
+    highlight, and repairing it eats the plate edge."""
+    plate_window_scale: float = 1.5
+    plate_window_min: int = 30
+    """Window around a candidate used to estimate the level of the plate."""
+    plate_level_percentile: float = 80.0
+    """Percentile of that window taken as the plate level (the plate is the
+    brighter surface, so a high percentile is the surface, not the table)."""
+    glow_luma: float = 118.0
     """Soft halo around a detected highlight: bright, achromatic and touching an
     already detected specular region, so the glow around a flare is removed too."""
-    glow_grow: int = 18
-    """How far the soft halo may reach from a detected specular region."""
+    glow_rise: float = 16.0
+    """The halo pixel must also rise this much above the local background; the
+    dim skirt of a highlight is a rise, not a high absolute level."""
+    glow_grow: int = 8
+    """How far one halo growth step may reach from the current glare pixels."""
+    glow_steps: int = 3
+    """Growth steps, so the halo follows the skirt of the highlight outwards
+    instead of a fixed ring."""
+    glow_plate_tolerance: float = 15.0
+    """The halo must stay within this much of the plate level around the
+    highlight, so it never runs off the plate onto the dark table."""
 
     # --- stage B: glare versus marker ink ---------------------------------
     ink_chroma_min: float = 55.0
@@ -69,6 +89,21 @@ class Phase1Config:
     hull_fill_max_ratio: float = 3.2
     """Only bridge an ink region over a highlight while its convex hull stays
     below this multiple of the visible ink area (protects smeared trails)."""
+    plate_fill_sigma: float = 22.0
+    """Scale of the plate colour estimate used to fill a repair.  The colour of
+    a repaired pixel is taken from the plate around the hole, never from the
+    inpainting itself, so ink can not bleed into the plate."""
+    ink_recovery_factor: float = 1.8
+    """How much more saturated rebuilt ink may become than the ink still visible
+    around the highlight."""
+    ink_recovery_ceiling: float = 225.0
+    """Absolute chroma ceiling for a rebuilt dot."""
+    ink_recovery_darkness_floor: float = 25.0
+    """Needed range between the plate and white before the wash of a highlight
+    can be undone; on an already near-white plate there is nothing to undo."""
+    ink_recovery_t_min: float = 0.22
+    """Smallest transmission the recovery may divide by (bounds the
+    amplification of noise and of a nearly opaque highlight)."""
 
     # --- stage D: marker-like blobs only ----------------------------------
     marker_chroma_min: float = 50.0

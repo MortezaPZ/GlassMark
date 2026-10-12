@@ -89,7 +89,7 @@ The stages are separate functions so each can be called and tested alone.
 | --- | --- | --- |
 | A | `glare.find_bright_regions` | finds very bright / specular regions: absolute brightness, brightness above a wide local background, near-clipped achromatic pixels, plus the soft glow around a found highlight. Oversized bright areas are reported as exposure rather than recoverable glare. |
 | B | `glare.separate_glare_from_ink` | separates oil glare from marker ink, per pixel: strongly chromatic pixels, or chromatic pixels with a hard edge, are ink and are protected; smooth tinted patches are glare. |
-| C | `suppress.suppress_glare` | rebuilds the part of a dot a highlight washed out (convex hull of the visible ink, painted with the ink colour of the rim), then inpaints the remaining glare and refuses to invent colour that was not there. |
+| C | `suppress.suppress_glare` | rebuilds a washed-out marker from the dot's own pixels and the highlight's light on the plate, then fills remaining glare with surrounding plate colour so ink cannot leak into the plate. |
 | D | `markers.detect_markers` | keeps only marker-like blobs: chromatic, small, compact, dot-shaped; drops leftover shine and records the reason for every dropped candidate. |
 
 ## Synthetic data
@@ -120,25 +120,25 @@ python -m pytest tests -q
 ```
 
 `tests/test_phase1.py` fails when a known dot is missing from
-`02_marker_mask.png`, when a glare-only blob is kept as a marker, or when
-`03_cleaned.png` still shows a large specular peak on a known glare-only region;
-it also checks the colour read back from the cleaned image and that a dot under a
-highlight stays coloured. `tests/test_special_cases.py` runs A–H and checks the
-artefacts exist. Both print a short pass/fail table at the end, and
-`scripts/run_special_cases.py` writes the same information as
-`data/out/phase1_special/SPECIAL_CASES.md`.
+`02_marker_mask.png`, when a glare-only blob is kept as a marker, when
+`03_cleaned.png` still shows a large specular peak on a known glare-only region,
+when the plate outside the dots gains colour, or when a glared dot is left with
+a washed-out core. It also checks the colour read back from the cleaned image.
+`tests/test_special_cases.py` runs A–H and checks the artefacts exist. Both
+print a short pass/fail table at the end, and `scripts/run_special_cases.py`
+writes the same information as `data/out/phase1_special/SPECIAL_CASES.md`.
 
 ## Known limits
 
-* Verified on synthetic images only; real oily glass is phase 2.
+* Verified on synthetic images only. Real oily glass has not been run.
 * A **yellow** dot and a warm-tinted specular patch can share a hue. They are
   separated by saturation and by edge sharpness, which needs a reasonably sharp,
   non-blurred photo.
 * A very large bloom (a highlight that covers a big part of the frame) is treated
   as exposure and skipped rather than repaired.
-* A dot that is **completely** washed out, with no hue left anywhere in the
-  pixels, cannot be recovered from a single photo. Such a dot comes back
-  desaturated (the rebuilt core keeps roughly the chroma of the visible rim).
-* The rebuilt core of a washed out dot is flat: it inherits the ink colour of the
-  rim, not the original marker texture.
+* A near-white plate leaves almost no range to undo a wash: the highlight is
+  flattened, but a faint patch can remain.
+* A dot only a few pixels across cannot be measured or restored precisely.
+* A glare-only region is filled from the surrounding plate. The bright peak
+  goes; a slightly darker oval or halo can remain where the highlight sat.
 * One photo at a time; nothing here uses several views of the same plate together.

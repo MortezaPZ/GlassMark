@@ -84,6 +84,9 @@ class BrightRegions:
     luminance: np.ndarray
     chroma_map: np.ndarray
     background: np.ndarray
+    plate_level: np.ndarray
+    """Level of the plate around every accepted candidate, minus the margin a
+    glow has to stay above there.  ``-1`` where no candidate is nearby."""
     components: List[Dict[str, object]] = field(default_factory=list)
     skipped: List[Dict[str, object]] = field(default_factory=list)
 
@@ -100,6 +103,42 @@ class GlareSeparation:
     components: List[Dict[str, object]] = field(default_factory=list)
     ink_dominated: List[Dict[str, object]] = field(default_factory=list)
     ink_component_info: List[Dict[str, object]] = field(default_factory=list)
+
+
+def plate_level(
+    luminance: np.ndarray,
+    chroma_map: np.ndarray,
+    component: np.ndarray,
+    bbox: List[int],
+    cfg: Phase1Config = DEFAULT_CONFIG,
+) -> float:
+    """Brightness of the surface around a bright candidate.
+
+    The window around the candidate is reduced to the surface it sits on by
+    ignoring the candidate itself and everything chromatic (marker ink), and by
+    taking a high percentile: the plate is the brighter of the two surfaces at a
+    plate edge, the table is the darker one.  A real highlight stands clearly
+    above this level, while the bright rim of the plate - which only looks bright
+    because the background estimate crossed onto the table - does not.
+    """
+    height, width = luminance.shape
+    x, y, box_w, box_h = (int(v) for v in bbox)
+    pad = int(max(cfg.plate_window_min, cfg.plate_window_scale * max(box_w, box_h)))
+    x0, y0 = max(0, x - pad), max(0, y - pad)
+    x1, y1 = min(width, x + box_w + pad), min(height, y + box_h + pad)
+    window = np.zeros(luminance.shape, dtype=bool)
+    window[y0:y1, x0:x1] = True
+
+    patch = (component.astype(np.uint8) * 255)[y0:y1, x0:x1]
+    exclude = np.zeros(luminance.shape, dtype=bool)
+    exclude[y0:y1, x0:x1] = dilate(patch, 10) > 0
+    chromatic = np.where(chroma_map >= cfg.ink_chroma_min, np.uint8(255), np.uint8(0))
+    exclude |= dilate(chromatic, 5) > 0
+
+    values = luminance[window & ~exclude]
+    if values.size < 20:
+        return float("nan")
+    return float(np.percentile(values, cfg.plate_level_percentile))
 
 
 def find_bright_regions(bgr: np.ndarray, cfg: Phase1Config = DEFAULT_CONFIG) -> BrightRegions:
@@ -126,6 +165,7 @@ def find_bright_regions(bgr: np.ndarray, cfg: Phase1Config = DEFAULT_CONFIG) -> 
     labels, table = label_components(candidates)
 
     mask = np.zeros_like(candidates)
+    plate_map = np.full(candidates.shape, -1.0, dtype=np.float32)
     components: List[Dict[str, object]] = []
     skipped: List[Dict[str, object]] = []
 
@@ -140,12 +180,35 @@ def find_bright_regions(bgr: np.ndarray, cfg: Phase1Config = DEFAULT_CONFIG) -> 
             skipped.append(entry)
             continue
         component = labels == int(entry["label"])
+        level = plate_level(
+            luminance, chroma_map, component, entry["bbox"], cfg  # type: ignore[arg-type]
+        )
+        inside = float(np.median(luminance[component]))
+        entry["median_luma"] = round(inside, 2)
+        entry["plate_level"] = round(level, 2) if level == level else None
+        if level == level and inside < level + cfg.highlight_over_plate:
+            # Brighter than its own surroundings only because the background model
+            # crossed onto the dark table: this is the plate edge, not a highlight.
+            entry["reason"] = "not_brighter_than_surrounding_plate"
+            skipped.append(entry)
+            continue
+
         mask[component] = 255
         entry["id"] = f"g{len(components) + 1}"
         entry["mean_luma"] = round(float(luminance[component].mean()), 2)
         entry["peak_luma"] = round(float(luminance[component].max()), 2)
         entry["mean_chroma"] = round(float(chroma_map[component].mean()), 2)
         components.append(entry)
+
+        if level == level:
+            x, y, box_w, box_h = (int(v) for v in entry["bbox"])  # type: ignore[misc]
+            pad = int(max(cfg.plate_window_min, cfg.plate_window_scale * max(box_w, box_h)))
+            x0, y0 = max(0, x - pad), max(0, y - pad)
+            x1, y1 = min(width, x + box_w + pad), min(height, y + box_h + pad)
+            region = plate_map[y0:y1, x0:x1]
+            plate_map[y0:y1, x0:x1] = np.where(
+                region < 0, np.float32(level - cfg.glow_plate_tolerance), region
+            )
 
     for entry in skipped:
         entry.pop("label", None)
@@ -158,6 +221,7 @@ def find_bright_regions(bgr: np.ndarray, cfg: Phase1Config = DEFAULT_CONFIG) -> 
         luminance=luminance,
         chroma_map=chroma_map,
         background=background,
+        plate_level=plate_map,
         components=components,
         skipped=skipped,
     )
@@ -256,16 +320,34 @@ def separate_glare_from_ink(
     keep = cv2.bitwise_and(bright.mask, cv2.bitwise_not(ink_mask))
 
     # A flare never ends abruptly: the glow around it is dimmer than the core but
-    # still clearly above the plate.  Add that halo, as long as it is achromatic
-    # and connected to a region that was already found.
-    halo = (
-        (bright.luminance >= cfg.glow_luma)
-        & (ink_mask == 0)
-        & (dilate(keep, cfg.glow_grow) > 0)
+    # still clearly above the plate.  That skirt is found by growing outwards from
+    # every detected highlight, one step at a time, over pixels that are
+    # achromatic, clearly raised above the local background and still at the level
+    # of the plate the highlight sits on - so the glow follows the flare instead of
+    # a fixed ring, and never runs off the plate onto the dark table.
+    rise = bright.luminance - bright.background
+    eligible = (
+        (ink_mask == 0)
+        & (bright.luminance >= cfg.glow_luma)
+        & (rise >= cfg.glow_rise)
+        & ((bright.plate_level < 0) | (bright.luminance >= bright.plate_level))
     )
-    keep = np.where((keep > 0) | halo, np.uint8(255), np.uint8(0))
-
+    halo = np.zeros_like(keep)
     labels, table = label_components(bright.mask)
+    for entry in table:
+        component = labels == int(entry["label"])
+        seed = np.where(component & (keep > 0), np.uint8(255), np.uint8(0))
+        if not np.any(seed):
+            continue
+        frontier = seed
+        for _ in range(int(cfg.glow_steps)):
+            grown = (dilate(frontier, cfg.glow_grow) > 0) & eligible & (halo == 0) & (keep == 0)
+            if not np.any(grown):
+                break
+            halo = np.where(grown, np.uint8(255), halo)
+            frontier = np.where(grown, np.uint8(255), np.zeros_like(seed))
+    keep = np.where((keep > 0) | (halo > 0), np.uint8(255), np.uint8(0))
+
     components: List[Dict[str, object]] = []
     ink_dominated: List[Dict[str, object]] = []
     for entry in table:
@@ -284,6 +366,9 @@ def separate_glare_from_ink(
             "peak_luma": round(float(bright.luminance[component].max()), 2),
             "glare_pixels": int(np.count_nonzero(cv2.bitwise_and(
                 component.astype(np.uint8) * 255, keep
+            ))),
+            "halo_pixels": int(np.count_nonzero(cv2.bitwise_and(
+                component.astype(np.uint8) * 255, halo
             ))),
         }
         if ink_fraction > 0.5:

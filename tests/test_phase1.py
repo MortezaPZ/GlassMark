@@ -4,7 +4,10 @@ The suite must fail when
 
 * a known marker dot is missing from ``02_marker_mask.png``,
 * a pure glare blob (no ink in the ground truth) is kept as a marker,
-* ``03_cleaned.png`` still shows a large specular peak on a glare-only region.
+* ``03_cleaned.png`` still shows specular light on a glare-only region,
+* the plate outside the dots gains colour (ink smeared by a repair, or a tinted
+  patch polished instead of removed),
+* the middle of a dot that sat under a highlight is left pale and empty.
 
 The same checks also cover the colour read back from the cleaned image and the
 readability of a dot that sat under a highlight.
@@ -80,6 +83,22 @@ def test_dot_colours_are_readable(processed: list[CaseCheck]) -> None:
 def test_ink_survives_a_highlight(processed: list[CaseCheck]) -> None:
     messages = _failures(processed, "ink_under_glare")
     assert not messages, "a highlight deleted a marker:\n" + "\n".join(messages)
+
+
+def test_no_colour_is_added_to_the_plate(processed: list[CaseCheck]) -> None:
+    """A repair must not leak ink into the plate or polish a tint into it."""
+    messages = _failures(processed, "plate_color")
+    assert not messages, (
+        "the plate gained colour outside the marker dots:\n" + "\n".join(messages)
+    )
+
+
+def test_restored_cores_are_solid(processed: list[CaseCheck]) -> None:
+    """A dot whose middle a highlight washed out must come back filled."""
+    messages = _failures(processed, "restored_core")
+    assert not messages, (
+        "a glared dot was left with a washed out middle:\n" + "\n".join(messages)
+    )
 
 
 def test_every_case_has_rows(processed: list[CaseCheck]) -> None:

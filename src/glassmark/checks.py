@@ -15,8 +15,8 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 
-from .geom import annulus_mask, erode_mask, overlap_fraction, polygon_mask
-from .glare import luma
+from .geom import annulus_mask, dilate_mask, erode_mask, overlap_fraction, polygon_mask
+from .glare import chroma, luma
 from .imgio import read_image, read_json, sidecar_path
 
 MIN_DOT_COVERAGE = 0.45
@@ -25,7 +25,7 @@ MIN_DOT_COVERAGE = 0.45
 MAX_GLARE_COVERAGE = 0.05
 """A glare-only region may cover at most this much of ``02_marker_mask``."""
 
-GLARE_PEAK_MARGIN = 30.0
+GLARE_PEAK_MARGIN = 25.0
 """Cleaned brightness allowed above the local background, in luminance units."""
 
 MAX_INK_OVERLAP_FOR_PEAK_CHECK = 0.25
@@ -33,11 +33,40 @@ MAX_INK_OVERLAP_FOR_PEAK_CHECK = 0.25
 its surroundings are paint, not plate.  Such regions are covered by the ink
 readability checks instead."""
 
-GLARE_REDUCTION_RATIO = 0.5
-"""Fraction of the original contrast over the background that must be removed."""
+GLARE_REDUCTION_RATIO = 0.75
+"""Fraction of the original contrast over the background that must be removed.
+A highlight is only suppressed when the cleaned patch is close to the plate *or*
+when almost all of its contrast is gone; a mere halving used to leave a visible
+soft blob and streak behind."""
 
 MIN_INK_CHROMA_UNDER_GLARE = 55.0
 """Mean chroma a marker under a highlight must keep in ``03_cleaned``."""
+
+RESTORED_CORE_GLARE_OVERLAP = 0.15
+"""A dot covered at least this much by a highlight is checked for a rebuilt core."""
+
+MIN_RESTORED_CORE_RATIO = 0.95
+"""Chroma the rebuilt middle of a glared dot must keep, relative to the most
+colourful ink that dot still showed in the input (95th percentile of its rim).
+A lower value means the repair left a pale, empty middle inside the dot - a ring
+instead of a solid marker.  The bar is just below one because a dot only a few
+pixels across does not hold enough ink pixels to measure the wash of the
+highlight over it precisely."""
+
+MIN_RESTORED_CORE_COVERAGE = 0.6
+"""Share of that middle that must be filled in ``02_marker_mask``."""
+
+PLATE_CHROMA_RISE_MAX = 0.5
+"""Mean chroma the plate outside the dots may gain over the input."""
+
+INVENTED_CHROMA_MIN = 26.0
+"""Chroma above which a plate pixel counts as coloured at all."""
+
+INVENTED_CHROMA_RISE = 8.0
+"""Chroma a plate pixel may gain over the input and still count as unchanged."""
+
+MAX_INVENTED_PLATE_FRACTION = 0.0005
+"""Share of the plate that may gain that much colour anywhere."""
 
 RESULT_REGISTRY: List["CaseCheck"] = []
 """Every evaluated case, so the pytest session can print one table at the end."""
@@ -135,6 +164,41 @@ def evaluate_case(
     ink_mask = polygon_mask(shape, [list(d["polygon"]) for d in dots])
     dot_masks = {str(d["id"]): polygon_mask(shape, [list(d["polygon"])]) for d in dots}
 
+    # Nothing outside the dots may gain colour: a repair that leaks ink, or a
+    # coloured patch that was polished into the plate, shows up here.
+    plate = np.zeros(shape, dtype=np.uint8)
+    plate[cv2.bitwise_not(dilate_mask(ink_mask, 3)) > 0] = 255
+    input_chroma = chroma(input_image)
+    cleaned_chroma = chroma(cleaned)
+    plate_pixels = plate > 0
+    chroma_rise = (cleaned_chroma - input_chroma)[plate_pixels]
+    mean_rise = float(chroma_rise.mean()) if chroma_rise.size else 0.0
+    invented = (
+        (cleaned_chroma >= INVENTED_CHROMA_MIN)
+        & (cleaned_chroma >= input_chroma + INVENTED_CHROMA_RISE)
+        & plate_pixels
+    )
+    invented_fraction = float(np.count_nonzero(invented)) / float(max(1, np.count_nonzero(plate_pixels)))
+    check.rows.append(
+        Row(
+            check="no colour added to the plate outside the dots",
+            expected=(
+                f"mean chroma rise <= {PLATE_CHROMA_RISE_MAX:.1f} and coloured "
+                f"pixels <= {MAX_INVENTED_PLATE_FRACTION:.4%}"
+            ),
+            actual=(
+                f"mean rise {mean_rise:+.2f}, +{invented_fraction:.4%} of the plate "
+                f"({int(np.count_nonzero(invented))} px)"
+            ),
+            output="03_cleaned.png",
+            kind="plate_color",
+            status="PASS"
+            if mean_rise <= PLATE_CHROMA_RISE_MAX
+            and invented_fraction <= MAX_INVENTED_PLATE_FRACTION
+            else "FAIL",
+        )
+    )
+
     for dot in dots:
         dot_id = str(dot["id"])
         colour = str(dot["color"])
@@ -167,7 +231,8 @@ def evaluate_case(
             )
         )
 
-        if float(dot.get("glare_overlap_fraction", 0.0)) > 0.0:
+        glare_overlap = float(dot.get("glare_overlap_fraction", 0.0))
+        if glare_overlap > 0.0:
             values = cleaned[selected]
             mean_chroma = 0.0
             if values.size:
@@ -181,6 +246,39 @@ def evaluate_case(
                     output="03_cleaned.png",
                     kind="ink_under_glare",
                     status="PASS" if mean_chroma >= MIN_INK_CHROMA_UNDER_GLARE else "FAIL",
+                )
+            )
+
+        if glare_overlap >= RESTORED_CORE_GLARE_OVERLAP:
+            core = _core_mask(dot["polygon"], shape, float(dot["radius"]))
+            rim = cv2.bitwise_and(
+                mask, cv2.bitwise_not(dilate_mask(core, 2))
+            )
+            if int(np.count_nonzero(rim)) < 4:
+                rim = mask
+            visible = input_chroma[rim > 0]
+            ink_chroma = float(np.percentile(visible, 95)) if visible.size else 0.0
+            core_chroma = float(cleaned_chroma[core > 0].mean()) if np.any(core) else 0.0
+            ratio = core_chroma / max(1.0, ink_chroma)
+            coverage = overlap_fraction(core, marker_mask)
+            filled = (
+                ratio >= MIN_RESTORED_CORE_RATIO
+                and coverage >= MIN_RESTORED_CORE_COVERAGE
+            )
+            check.rows.append(
+                Row(
+                    check=f"dot {dot_id} ({colour}) middle rebuilt, not left washed out",
+                    expected=(
+                        f"core chroma >= {MIN_RESTORED_CORE_RATIO:.2f} x the strongest ink "
+                        f"of its own rim, covered >= {MIN_RESTORED_CORE_COVERAGE:.2f}"
+                    ),
+                    actual=(
+                        f"core chroma {core_chroma:.1f} vs rim {ink_chroma:.1f} "
+                        f"(ratio {ratio:.2f}), coverage {coverage:.2f}"
+                    ),
+                    output="03_cleaned.png",
+                    kind="restored_core",
+                    status="PASS" if filled else "FAIL",
                 )
             )
 
