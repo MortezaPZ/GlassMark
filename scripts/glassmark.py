@@ -42,17 +42,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "step",
-        choices=("all", "synth", "run", "test", "special-cases"),
-        help="what to do; 'all' runs synth, run and test in order",
+        choices=("all", "synth", "run", "test", "special-cases", "serve"),
+        help="what to do; 'all' runs synth, run and test in order, 'serve' starts the Web UI / REST API",
     )
     parser.add_argument("--input", default="data/synthetic")
     parser.add_argument("--output", default="data/out/phase1")
+    parser.add_argument("--port", type=int, default=8080, help="port for the web server")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     status = 0
+
+    if args.step == "serve":
+        command = [sys.executable, "-m", "glassmark.server", "--port", str(args.port)]
+        print(f"$ {' '.join(command)}")
+        return subprocess.call(command, cwd=str(ROOT))
 
     if args.step in {"all", "synth"}:
         status = run_step("make_synthetic.py", ["--output", args.input])

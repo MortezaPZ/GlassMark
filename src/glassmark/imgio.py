@@ -28,6 +28,14 @@ def read_image(path: str | Path) -> np.ndarray:
     return image
 
 
+def encode_png(image: np.ndarray) -> bytes:
+    """Encode an image as PNG bytes in memory."""
+    ok, buffer = cv2.imencode(".png", image)
+    if not ok:
+        raise ValueError("cannot encode image to PNG")
+    return bytes(buffer)
+
+
 def write_image(path: str | Path, image: np.ndarray) -> None:
     """Write a uint8 image, creating parent folders as needed."""
     path = Path(path)

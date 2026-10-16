@@ -17,9 +17,11 @@ from typing import Dict, List, Optional, Sequence
 import numpy as np
 
 from .config import DEFAULT_CONFIG, Phase1Config
+from .decode import decode_layout
 from .glare import find_bright_regions, separate_glare_from_ink
 from .imgio import read_image, write_image, write_json
 from .markers import detect_markers
+from .rectify import compute_rectification
 from .report import build_report
 from .suppress import suppress_glare
 
@@ -29,6 +31,7 @@ OUTPUT_NAMES = {
     "markers": "02_marker_mask.png",
     "cleaned": "03_cleaned.png",
     "dots": "04_dots_only.png",
+    "rectified": "05_rectified.png",
     "report": "report.json",
 }
 
@@ -47,7 +50,7 @@ def run_image(
     output_root: str | Path,
     cfg: Phase1Config = DEFAULT_CONFIG,
 ) -> Phase1Result:
-    """Process one photo and write every phase 1 artefact below ``output_root/stem``."""
+    """Process one photo through phases 1-3 and write all artefacts below ``output_root/stem``."""
     image_path = Path(image_path)
     stem = image_path.stem
     output_dir = Path(output_root) / stem
@@ -55,6 +58,7 @@ def run_image(
 
     image = read_image(image_path)
 
+    # Phase 1: Glare suppression + marker detection
     bright = find_bright_regions(image, cfg)
     separation = separate_glare_from_ink(image, bright, cfg)
     suppressed = suppress_glare(image, bright, separation, cfg)
@@ -64,22 +68,38 @@ def run_image(
     keep = markers.mask > 0
     dots_only[keep] = suppressed.image[keep]
 
+    # Phase 2: Plate rectification
+    rectification = compute_rectification(suppressed.image)
+
+    # Phase 3: Semantic pattern decoding
+    decoding = decode_layout(markers.blobs, rectification.homography)
+
     files = {
         "input": OUTPUT_NAMES["input"],
         "glare_mask": OUTPUT_NAMES["glare"],
         "marker_mask": OUTPUT_NAMES["markers"],
         "cleaned": OUTPUT_NAMES["cleaned"],
         "dots_only": OUTPUT_NAMES["dots"],
+        "rectified": OUTPUT_NAMES["rectified"],
         "report": OUTPUT_NAMES["report"],
     }
 
     write_image(output_dir / OUTPUT_NAMES["input"], image)
-    # 01 shows the glare that survives stage B, i.e. what the pipeline treats as
-    # reflected light; bright pixels that are simply marker ink are not glare.
     write_image(output_dir / OUTPUT_NAMES["glare"], separation.glare_mask)
     write_image(output_dir / OUTPUT_NAMES["markers"], markers.mask)
     write_image(output_dir / OUTPUT_NAMES["cleaned"], suppressed.image)
     write_image(output_dir / OUTPUT_NAMES["dots"], dots_only)
+    if rectification.rectified_image is not None:
+        write_image(output_dir / OUTPUT_NAMES["rectified"], rectification.rectified_image)
+
+    rect_dict = {
+        "corners": rectification.corners.to_list(),
+        "confidence": round(rectification.corners.confidence, 3),
+        "method": rectification.corners.method,
+        "canonical_size": list(rectification.canonical_size),
+        "homography": [[round(float(v), 6) for v in row] for row in rectification.homography],
+    }
+    decode_dict = decoding.to_dict()
 
     report = build_report(
         stem=stem,
@@ -91,6 +111,8 @@ def run_image(
         markers=markers,
         files=files,
         cfg=cfg,
+        rectification=rect_dict,
+        decoding=decode_dict,
     )
     for key, filename in files.items():
         report.setdefault("files_absolute", {})[key] = str((output_dir / filename).resolve())

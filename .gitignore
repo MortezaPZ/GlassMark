@@ -8,10 +8,11 @@ data/synthetic/*
 # Local tool folders
 .freebuff/
 
-# Python
+# Python & Build
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
 venv/
 *.egg-info/
+build/

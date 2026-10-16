@@ -6,7 +6,7 @@ describes measurements taken from the image that was processed.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import cv2
 import numpy as np
@@ -31,6 +31,7 @@ def build_report(
     markers: MarkerBlobs,
     files: Dict[str, str],
     cfg: Phase1Config = DEFAULT_CONFIG,
+    **kwargs: Any,
 ) -> Dict[str, object]:
     height, width = image.shape[:2]
     total = float(height * width)
@@ -131,6 +132,8 @@ def build_report(
             "blobs": blob_reports,
             "dropped_candidates": markers.dropped,
         },
+        "stage_e_rectification": kwargs.get("rectification"),
+        "stage_f_decoding": kwargs.get("decoding"),
         "notes": notes,
         "files": files,
     }
