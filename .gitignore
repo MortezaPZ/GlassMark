@@ -16,3 +16,6 @@ __pycache__/
 venv/
 *.egg-info/
 build/
+/dist/
+/PHASE1_STATUS.md
+/GlassMark_Client_Steps_Live_Session.mp4
