@@ -4,7 +4,7 @@ GlassMark reads a photo of a glass plate carrying an oily film and coloured
 marker dots, eliminates specular highlights and oil glare, calibrates and rectifies
 perspective geometry, and semantically decodes the marker dot arrangement.
 
-**Phases 1 through 4 are fully implemented, verified, and test-covered.**
+Phases 1 through 4 are implemented. The test suite covers image processing, perspective rectification, layout decoding, and the web API.
 
 ---
 
@@ -54,9 +54,18 @@ python scripts/glassmark.py all
 Which runs in order:
 1. `python scripts/make_synthetic.py`
 2. `python scripts/run_phase1.py --input data/synthetic --output data/out/phase1`
-3. `python -m pytest tests -q` (all 25 tests)
+3. `python -m pytest tests -q`
 
-### 3. Start Web UI & REST API Server
+### 3. Generate the synthetic sample images
+
+```bash
+python scripts/make_synthetic.py
+```
+
+The sample buttons use these generated inputs; no real-photo samples are bundled.
+
+### 4. Start Web UI & REST API Server
+
 ```bash
 python scripts/glassmark.py serve --port 8080
 ```

@@ -361,10 +361,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
         <div class="sample-buttons-wrapper">
             <span style="color: var(--text-dim); margin-left: 10px; font-weight: 600;">آزمایش سریع با عکس‌های زوایای گوناگون:</span>
-            <button class="sample-btn primary" onclick="loadSample('real_glass_plate_topdown')">📸 نمای بالا (Top-Down)</button>
-            <button class="sample-btn" onclick="loadSample('real_glass_angle_left')">📐 زاویه چپ (Angle Left)</button>
-            <button class="sample-btn" onclick="loadSample('real_glass_angle_right')">📐 زاویه راست (Angle Right)</button>
-            <button class="sample-btn" onclick="loadSample('real_glass_angle_pitch')">📐 زاویه شیب‌دار (Pitch)</button>
+            <button class="sample-btn primary" onclick="loadSample('case_H_view1')">📐 نمای مصنوعی اول (View 1)</button>
+            <button class="sample-btn" onclick="loadSample('case_H_view2')">📐 نمای مصنوعی دوم (View 2)</button>
+            <button class="sample-btn" onclick="loadSample('base_03_glare_on_red')">🧪 بازتاب روی نشان قرمز</button>
+            <button class="sample-btn" onclick="loadSample('case_G_overexposed')">☀️ صحنهٔ نوردهی زیاد</button>
             <button class="sample-btn" onclick="loadSample('base_01_oil_before')">🧪 نمونه روغنی پایه</button>
         </div>
 

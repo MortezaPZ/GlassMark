@@ -39,14 +39,3 @@ def test_client_steps_pipeline_synthetic():
     images = res["images"]
     assert images["step2_symbols"].startswith("data:image/png;base64,")
     assert images["step3_aligned"].startswith("data:image/png;base64,")
-
-
-def test_client_steps_real_glass_plate():
-    image_path = ROOT / "data" / "real_glass_angle_left.png"
-    if not image_path.exists():
-        return
-    data = image_path.read_bytes()
-    res = process_image_buffer(data)
-    assert res["status"] == "success"
-    cs = res["client_steps"]
-    assert cs["step4_hierarchical_encoding"]["marks_count"] > 0
